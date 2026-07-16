@@ -59,24 +59,27 @@ bool sdr::free_config(PCONFIG sdr)
 
 bool sdr::sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples)
 {
-    ssize_t bytes = iio_buffer_refill(sdr->rxbuf);
-    if(bytes < 0) return false;
-
-    ptrdiff_t step = iio_buffer_step(sdr->rxbuf);
-    char* first = (char*)iio_buffer_first(sdr->rxbuf, sdr->rx1_i);
-    char* end = (char*)iio_buffer_end(sdr->rxbuf);
-    size_t cnt = 0;
-    
-    while(first < end && cnt < samples)
+    size_t received = 0;
+    while(received < samples)
     {
-        int16_t* iq = (int16_t*)first;
-        rx1[cnt].i = (float)iq[0];
-        rx1[cnt].q = (float)iq[1];
-        rx2[cnt].i = (float)iq[2];
-        rx2[cnt].q = (float)iq[3];
-        first += step;
-        ++cnt;
+        ssize_t bytes = iio_buffer_refill(sdr->rxbuf);
+        if(bytes < 0) return false;
+
+        ptrdiff_t step = iio_buffer_step(sdr->rxbuf);
+        char* first = (char*)iio_buffer_first(sdr->rxbuf, sdr->rx1_i);
+        char* end = (char*)iio_buffer_end(sdr->rxbuf);
+
+        while (first < end && received < samples)
+        {
+            int16_t* iq = (int16_t*)first;
+            rx1[received].i = (float)iq[0];
+            rx1[received].q = (float)iq[1];
+            rx2[received].i = (float)iq[2];
+            rx2[received].q = (float)iq[3];
+            first += step;
+            ++received;
+        }
     }
 
-    return cnt != 0 ? true : false;
+    return received != 0 ? true : false;
 }

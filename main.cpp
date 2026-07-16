@@ -5,12 +5,13 @@
 #include <csignal>
 #include "types.h"
 #include "sdr.h"
+#include "math.h"
+#include "FFT.h"
+#include <cstring>
 
-
-#define SAMPLE_RATE 4096
-
-COMPLEX rx1[SAMPLE_RATE];
-COMPLEX rx2[SAMPLE_RATE];
+#define FREQ 2412000000
+#define SAMPLE_RATE 10000000
+#define FFT_size 1024
 
 sig_atomic_t doneman = 1;
 void signal_handler(int)
@@ -20,24 +21,57 @@ void signal_handler(int)
 
 int main()
 {
-    CONFIG sdr;
-    if(sdr::init_sdr(&sdr, "ip:192.168.2.1", 2412000000, SAMPLE_RATE) && sdr::free_config(&sdr))
+    PCOMPLEX rx1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PCOMPLEX rx2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    CONFIG sdr = {};
+    if(sdr::init_sdr(&sdr, "ip:192.168.2.1", FREQ, SAMPLE_RATE) && sdr::free_config(&sdr))
         return EXIT_FAILURE;
     
+    PCOMPLEX polyph_1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PCOMPLEX polyph_2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PHASE phase;
+    FFT_t fft1;
+    FFT_t fft2;
+
+    if(!FFT::fft_init(&fft1, FFT_size) || !FFT::fft_init(&fft2, FFT_size))
+    { printf("failed fft init\n"); return EXIT_FAILURE; }
+
+    //int blocks = SAMPLE_RATE / FFT_size;
+    double wk;
+    int blocks = 1000;
+    int win_len = blocks * FFT_size;
+    double* w = FFT::window_Hamming_init(win_len);
     std::signal(SIGINT, signal_handler);
     while(doneman)
     {
-        if(!sdr::sdr_receive(&sdr, rx1, rx2, SAMPLE_RATE))
-            break;
-        printf("%f %f | %f %f\n",
-               rx1[0].i,
-               rx1[0].q,
-               rx2[0].i,
-               rx2[0].q);
-        
-        usleep(100000);
+        memset(polyph_1, 0x00, FFT_size * sizeof(COMPLEX));
+        memset(polyph_2, 0x00, FFT_size * sizeof(COMPLEX));
+        for(int i = 0; i < blocks; ++i)
+        {
+            if(!sdr::sdr_receive(&sdr, rx1, rx2, FFT_size))
+                break;
+
+            for(int k = 0; k < FFT_size; ++k)
+            {
+                wk = w[k + i * FFT_size]; 
+                polyph_1[k].i += rx1[k].i * wk;
+                polyph_1[k].q += rx1[k].q * wk;
+                polyph_2[k].i += rx2[k].i * wk;
+                polyph_2[k].q += rx2[k].q * wk;
+            }
+        }
+
+        FFT::fft_exec(&fft1, polyph_1, FFT_size);
+        FFT::fft_exec(&fft2, polyph_2, FFT_size);
+
+        FFT::phase_diff(&phase, &fft1, &fft2, FFT_size);
     }
 
+    free(polyph_1);
+    free(polyph_2);
+    free(rx1);
+    free(rx2);
+    free(w);    
     sdr::free_config(&sdr);
     return EXIT_SUCCESS;
 }

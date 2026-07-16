@@ -24,6 +24,7 @@ namespace sdr
     bool init_sdr(PCONFIG sdr, const char* uri, size_t freq, size_t sample_rate);
     bool free_config(PCONFIG sdr);
     bool sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples);
+    bool receive_block(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t count);
 }
 
 #endif

@@ -1,11 +1,10 @@
-EXEC = sdr_app
-CC = g++
+CC = gcc
 CFLAGS = -Wall -O2 -std=c++17
-LDFLAGS = -liio
-SRC = main.cpp sdr.cpp
+LDFLAGS = -liio -lfftw3f -lm
+SRC = main.cpp sdr.cpp FFT.cpp
 
 OBJ = $(SRC:.cpp=.o)
-EXEC = laced
+EXEC = sdr
 
 $(EXEC): $(OBJ)
 	$(CC) $(CFLAGS) $(OBJ) -o $(EXEC) $(LDFLAGS)
