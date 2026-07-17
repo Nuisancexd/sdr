@@ -39,11 +39,11 @@ int main()
     float lambda = 299792458.0f / FREQ;
     float d = lambda / 2.0f;
     int max_bin;
-    float max_ampl, sum_re, sum_im, delta_phi, power_threshold, sin_theta, theta_rad, theta_deg;
+    float max_ampl, delta_phi, sin_theta, theta_rad, theta_deg;
 
     //int blocks = SAMPLE_RATE / FFT_size;
     double wk;
-    int blocks = 1000;
+    int blocks = 500;
     int win_len = blocks * FFT_size;
     double* w = FFT::window_Hamming_init(win_len);
     std::signal(SIGINT, signal_handler);
@@ -75,30 +75,22 @@ int main()
         max_bin = 0;
         for (int m = 1; m < FFT_size; ++m)
         {
-            float power = FFT::fft_amplitude(&fft1, m) + FFT::fft_amplitude(&fft2, m);
-            if (power > max_ampl)
+            float amplitude = FFT::fft_amplitude(&fft1, m) + FFT::fft_amplitude(&fft2, m);
+            if (amplitude > max_ampl)
             {
-                max_ampl = power;
+                max_ampl = amplitude;
                 max_bin = m;
             }
         }
 
-        sum_re = 0.0f;
-        sum_im = 0.0f;
-        power_threshold = max_ampl * 0.3f;
-
-        for (int m = 1; m < FFT_size; ++m)
-        {
-            float power = FFT::fft_amplitude(&fft1, m) + FFT::fft_amplitude(&fft2, m);
-            if (power > power_threshold)
-            {
-                sum_re += phase.bin[m].re;
-                sum_im += phase.bin[m].im;
-            }
-        }
-        static float PHASE_OFFSET = -2.7;
-        delta_phi = atan2f(sum_im, sum_re);
+        static float PHASE_OFFSET = -2.7f;
+        delta_phi = atan2f(phase.bin[max_bin].im, phase.bin[max_bin].re);
         delta_phi -= PHASE_OFFSET;
+
+        delta_phi = fmodf(delta_phi + M_PI, 2.0 * M_PI);
+        if (delta_phi < 0)
+            delta_phi += 2.0 * M_PI;
+        delta_phi -= M_PI;
 
         sin_theta = (delta_phi * lambda) / (2.0f * M_PI * d);
         if (sin_theta >  1.0f) sin_theta =  1.0f;

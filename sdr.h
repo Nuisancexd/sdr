@@ -15,7 +15,8 @@ typedef struct iio_config
         struct iio_buffer* rxbuf;
         struct iio_device* dev;
         struct iio_channel* chn;
-        struct iio_channel* rx_cfg;
+        struct iio_channel* rx1_cfg;
+        struct iio_channel* rx2_cfg;
         struct iio_device* rx;
     }CONFIG, *PCONFIG;
 
