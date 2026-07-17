@@ -10,7 +10,7 @@
 #include <cstring>
 
 #define FREQ 2412000000
-#define SAMPLE_RATE 10000000
+#define SAMPLE_RATE 20000000
 #define FFT_size 1024
 
 sig_atomic_t doneman = 1;
@@ -35,6 +35,11 @@ int main()
 
     if(!FFT::fft_init(&fft1, FFT_size) || !FFT::fft_init(&fft2, FFT_size))
     { printf("failed fft init\n"); return EXIT_FAILURE; }
+
+    float lambda = 299792458.0f / FREQ;
+    float d = lambda / 2.0f;
+    int max_bin;
+    float max_ampl, sum_re, sum_im, delta_phi, power_threshold, sin_theta, theta_rad, theta_deg;
 
     //int blocks = SAMPLE_RATE / FFT_size;
     double wk;
@@ -65,6 +70,46 @@ int main()
         FFT::fft_exec(&fft2, polyph_2, FFT_size);
 
         FFT::phase_diff(&phase, &fft1, &fft2, FFT_size);
+
+        max_ampl = 0.0f;
+        max_bin = 0;
+        for (int m = 1; m < FFT_size; ++m)
+        {
+            float power = FFT::fft_amplitude(&fft1, m) + FFT::fft_amplitude(&fft2, m);
+            if (power > max_ampl)
+            {
+                max_ampl = power;
+                max_bin = m;
+            }
+        }
+
+        sum_re = 0.0f;
+        sum_im = 0.0f;
+        power_threshold = max_ampl * 0.3f;
+
+        for (int m = 1; m < FFT_size; ++m)
+        {
+            float power = FFT::fft_amplitude(&fft1, m) + FFT::fft_amplitude(&fft2, m);
+            if (power > power_threshold)
+            {
+                sum_re += phase.bin[m].re;
+                sum_im += phase.bin[m].im;
+            }
+        }
+        static float PHASE_OFFSET = -2.7;
+        delta_phi = atan2f(sum_im, sum_re);
+        delta_phi -= PHASE_OFFSET;
+
+        sin_theta = (delta_phi * lambda) / (2.0f * M_PI * d);
+        if (sin_theta >  1.0f) sin_theta =  1.0f;
+        if (sin_theta < -1.0f) sin_theta = -1.0f;
+
+        theta_rad = asinf(sin_theta);
+        theta_deg = theta_rad * 180.0f / M_PI;
+
+        printf("Signal at bin %d, amplitude = %.1f\n", max_bin, max_ampl / FFT_size);
+        printf("Phase difference = %.3f rad (%.1f deg)\n", delta_phi, delta_phi * 180.0f / M_PI);
+        printf("angle = %.1f degrees\n", theta_deg);
     }
 
     free(polyph_1);
