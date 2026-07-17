@@ -84,7 +84,7 @@ int main()
         }
 
         static float PHASE_OFFSET = -2.7f;
-        delta_phi = atan2f(phase.bin[max_bin].im, phase.bin[max_bin].re);
+        delta_phi = phase.bin[max_bin].phase;
         delta_phi -= PHASE_OFFSET;
 
         delta_phi = fmodf(delta_phi + M_PI, 2.0 * M_PI);
