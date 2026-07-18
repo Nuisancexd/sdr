@@ -26,6 +26,8 @@ namespace sdr
     bool free_config(PCONFIG sdr);
     bool sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples);
     bool receive_block(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t count);
+    void change_channel_freq(PCONFIG sdr, size_t freq);
+    bool sdr_receive_one_channel(PCONFIG sdr, PCOMPLEX rx, size_t samples);
 }
 
 #endif

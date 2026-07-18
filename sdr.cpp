@@ -1,4 +1,5 @@
 #include "sdr.h"
+#include "types.h"
 
 #include <iio.h>
 #include <cstdio>
@@ -54,6 +55,11 @@ end:
     return return_code;
 }
 
+void sdr::change_channel_freq(PCONFIG sdr, size_t freq)
+{
+    iio_channel_attr_write_longlong(sdr->chn, "frequency", freq);
+}
+
 bool sdr::free_config(PCONFIG sdr)
 {
     if(sdr->rxbuf)
@@ -82,6 +88,31 @@ bool sdr::sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples)
             rx1[received].q = (float)iq[1];
             rx2[received].i = (float)iq[2];
             rx2[received].q = (float)iq[3];
+            first += step;
+            ++received;
+        }
+    }
+
+    return received != 0 ? true : false;
+}
+
+bool sdr::sdr_receive_one_channel(PCONFIG sdr, PCOMPLEX rx, size_t samples)
+{
+    size_t received = 0;
+    while(received < samples)
+    {
+        ssize_t bytes = iio_buffer_refill(sdr->rxbuf);
+        if(bytes < 0) return false;
+
+        ptrdiff_t step = iio_buffer_step(sdr->rxbuf);
+        char* first = (char*)iio_buffer_first(sdr->rxbuf, sdr->rx1_i);
+        char* end = (char*)iio_buffer_end(sdr->rxbuf);
+
+        while (first < end && received < samples)
+        {
+            int16_t* iq = (int16_t*)first;
+            rx[received].i = (float)iq[0];
+            rx[received].q = (float)iq[1];
             first += step;
             ++received;
         }

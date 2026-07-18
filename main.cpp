@@ -9,9 +9,17 @@
 #include "FFT.h"
 #include <cstring>
 
-#define FREQ 2412000000
+#define M 1000000
+
+//#define FREQ 2412000000
+static ssize_t FREQ = 2412000000;
+#define BASEBAND 20 * M
 #define SAMPLE_RATE 20000000
 #define FFT_size 1024
+
+constexpr float TIME_SIGNAL = (float)FFT_size/(float)SAMPLE_RATE;
+float TIME_SIGNAL_WIFI = 0.1 / TIME_SIGNAL;
+int WIFI_INTERVAL = (int)TIME_SIGNAL_WIFI;
 
 sig_atomic_t doneman = 1;
 void signal_handler(int)
@@ -27,12 +35,18 @@ int main()
     if(sdr::init_sdr(&sdr, "ip:192.168.2.1", FREQ, SAMPLE_RATE) && sdr::free_config(&sdr))
         return EXIT_FAILURE;
     
-    PCOMPLEX polyph_1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
-    PCOMPLEX polyph_2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PCOMPLEX fft_sum_1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PCOMPLEX fft_sum_2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
     PHASE phase;
     FFT_t fft1;
     FFT_t fft2;
 
+    PCOMPLEX rx_scan = (PCOMPLEX)malloc(FFT_size * WIFI_INTERVAL * sizeof(COMPLEX));
+    int samples_scan = FFT_size * WIFI_INTERVAL;
+    float power_scan = 0;
+    float power_scan_db;
+    int porog_H1_db = 20;
+    int ch = 1;
     if(!FFT::fft_init(&fft1, FFT_size) || !FFT::fft_init(&fft2, FFT_size))
     { printf("failed fft init\n"); return EXIT_FAILURE; }
 
@@ -40,7 +54,6 @@ int main()
     float d = lambda / 2.0f;
     int max_bin;
     float max_ampl, delta_phi, sin_theta, theta_rad, theta_deg;
-
     //int blocks = SAMPLE_RATE / FFT_size;
     double wk;
     int blocks = 500;
@@ -49,8 +62,35 @@ int main()
     std::signal(SIGINT, signal_handler);
     while(doneman)
     {
-        memset(polyph_1, 0x00, FFT_size * sizeof(COMPLEX));
-        memset(polyph_2, 0x00, FFT_size * sizeof(COMPLEX));
+        for(; ch <= 13; ++ch, power_scan = 0)
+        {
+            if(!doneman) break;
+            sdr::change_channel_freq(&sdr, FREQ + ((ch - 1) * 5 * M));
+            usleep(10000);
+            for(int i = 0; i < 2; ++i)
+                sdr::sdr_receive_one_channel(&sdr, rx_scan, FFT_size);    
+            
+            sdr::sdr_receive_one_channel(&sdr, rx_scan, samples_scan);
+                
+            for(int j = 0; j < samples_scan; ++j)
+                power_scan += (rx_scan[j].i * rx_scan[j].i) + (rx_scan[j].q * rx_scan[j].q);
+
+            power_scan /= samples_scan;
+            power_scan_db = 10.0 * log10(power_scan + 1e-10);
+            printf("Channel %d\t avg_sum_iq %f\t power_db %f\n", ch, power_scan, power_scan_db);
+            ch %= 13;
+            if(power_scan_db >= porog_H1_db)
+            {
+                printf("Peleng for channel %d power_signal >= porog_H1\n", ch);
+                ++ch;
+                break;
+            }
+            else
+                continue;
+        }
+
+        memset(fft_sum_1, 0x00, FFT_size * sizeof(COMPLEX));
+        memset(fft_sum_2, 0x00, FFT_size * sizeof(COMPLEX));
         for(int i = 0; i < blocks; ++i)
         {
             if(!sdr::sdr_receive(&sdr, rx1, rx2, FFT_size))
@@ -59,15 +99,15 @@ int main()
             for(int k = 0; k < FFT_size; ++k)
             {
                 wk = w[k + i * FFT_size]; 
-                polyph_1[k].i += rx1[k].i * wk;
-                polyph_1[k].q += rx1[k].q * wk;
-                polyph_2[k].i += rx2[k].i * wk;
-                polyph_2[k].q += rx2[k].q * wk;
+                fft_sum_1[k].i += rx1[k].i * wk;
+                fft_sum_1[k].q += rx1[k].q * wk;
+                fft_sum_2[k].i += rx2[k].i * wk;
+                fft_sum_2[k].q += rx2[k].q * wk;
             }
         }
 
-        FFT::fft_exec(&fft1, polyph_1, FFT_size);
-        FFT::fft_exec(&fft2, polyph_2, FFT_size);
+        FFT::fft_exec(&fft1, fft_sum_1, FFT_size);
+        FFT::fft_exec(&fft2, fft_sum_2, FFT_size);
 
         FFT::phase_diff(&phase, &fft1, &fft2, FFT_size);
 
@@ -101,14 +141,21 @@ int main()
 
         printf("Signal at bin %d, amplitude = %.1f\n", max_bin, max_ampl / FFT_size);
         printf("Phase difference = %.3f rad (%.1f deg)\n", delta_phi, delta_phi * 180.0f / M_PI);
-        printf("angle = %.1f degrees\n", theta_deg);
+        printf("angle = %.1f degrees\n\n", theta_deg);
     }
 
-    free(polyph_1);
-    free(polyph_2);
-    free(rx1);
-    free(rx2);
-    free(w);    
+    if(fft_sum_1)
+        free(fft_sum_1);
+    if(fft_sum_2)
+        free(fft_sum_2);
+    if(rx1)
+        free(rx1);
+    if(rx2)
+        free(rx2);
+    if(w)
+        free(w);    
+    if(rx_scan)
+        free(rx_scan);
     sdr::free_config(&sdr);
     return EXIT_SUCCESS;
 }
