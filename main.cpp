@@ -59,7 +59,7 @@ int main()
     float max_ampl, delta_phi, sin_theta, theta_rad, theta_deg;
     //int blocks = SAMPLE_RATE / FFT_size;
     double wk;
-    int blocks = 500;
+    int blocks = 2000;
     int win_len = blocks * FFT_size;
     double* w = FFT::window_Hamming_init(win_len);
     std::signal(SIGINT, signal_handler);
@@ -126,7 +126,7 @@ int main()
             }
         }
 
-        static float PHASE_OFFSET = -2.7f;
+        static float PHASE_OFFSET = -3.7f;
         delta_phi = phase.bin[max_bin].phase;
         delta_phi -= PHASE_OFFSET;
 
