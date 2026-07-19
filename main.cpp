@@ -18,7 +18,7 @@ static ssize_t FREQ = 2412000000;
 #define FFT_size 1024
 
 constexpr float TIME_SIGNAL = (float)FFT_size/(float)SAMPLE_RATE;
-float TIME_SIGNAL_WIFI = 0.1 / TIME_SIGNAL;
+float TIME_SIGNAL_WIFI = 0.02 / TIME_SIGNAL;
 int WIFI_INTERVAL = (int)TIME_SIGNAL_WIFI;
 
 sig_atomic_t doneman = 1;
@@ -41,11 +41,14 @@ int main()
     FFT_t fft1;
     FFT_t fft2;
 
+    // iio_buffer* rx_scan_buf = NULL;
+    // if(!sdr::create_buffer(&sdr, &rx_scan_buf, 1 << 16))
+    //     { printf("failed create buffer scan\n"); return EXIT_FAILURE; }
     PCOMPLEX rx_scan = (PCOMPLEX)malloc(FFT_size * WIFI_INTERVAL * sizeof(COMPLEX));
     int samples_scan = FFT_size * WIFI_INTERVAL;
     float power_scan = 0;
     float power_scan_db;
-    int porog_H1_db = 20;
+    float porog_H1_db = 28.0;
     int ch = 1;
     if(!FFT::fft_init(&fft1, FFT_size) || !FFT::fft_init(&fft2, FFT_size))
     { printf("failed fft init\n"); return EXIT_FAILURE; }
@@ -62,15 +65,15 @@ int main()
     std::signal(SIGINT, signal_handler);
     while(doneman)
     {
-        for(; ch <= 13; ++ch, power_scan = 0)
+        for(; doneman; power_scan = 0)
         {
-            if(!doneman) break;
             sdr::change_channel_freq(&sdr, FREQ + ((ch - 1) * 5 * M));
             usleep(10000);
+            sdr.buf_pos = sdr.buf_end;
             for(int i = 0; i < 2; ++i)
-                sdr::sdr_receive_one_channel(&sdr, rx_scan, FFT_size);    
+                sdr::sdr_receive_one_channel(&sdr, sdr.rxbuf, rx_scan, FFT_size);    
             
-            sdr::sdr_receive_one_channel(&sdr, rx_scan, samples_scan);
+            sdr::sdr_receive_one_channel(&sdr, sdr.rxbuf, rx_scan, samples_scan);
                 
             for(int j = 0; j < samples_scan; ++j)
                 power_scan += (rx_scan[j].i * rx_scan[j].i) + (rx_scan[j].q * rx_scan[j].q);
@@ -78,15 +81,15 @@ int main()
             power_scan /= samples_scan;
             power_scan_db = 10.0 * log10(power_scan + 1e-10);
             printf("Channel %d\t avg_sum_iq %f\t power_db %f\n", ch, power_scan, power_scan_db);
-            ch %= 13;
             if(power_scan_db >= porog_H1_db)
             {
                 printf("Peleng for channel %d power_signal >= porog_H1\n", ch);
                 ++ch;
+                power_scan = 0;
                 break;
             }
-            else
-                continue;
+            if(++ch > 13)
+                ch = 1;
         }
 
         memset(fft_sum_1, 0x00, FFT_size * sizeof(COMPLEX));
@@ -156,6 +159,7 @@ int main()
         free(w);    
     if(rx_scan)
         free(rx_scan);
+    //sdr::free_buf_rx(&rx_scan_buf);
     sdr::free_config(&sdr);
     return EXIT_SUCCESS;
 }

@@ -18,6 +18,9 @@ typedef struct iio_config
         struct iio_channel* rx1_cfg;
         struct iio_channel* rx2_cfg;
         struct iio_device* rx;
+
+        char* buf_pos;
+        char* buf_end;
     }CONFIG, *PCONFIG;
 
 namespace sdr
@@ -27,7 +30,9 @@ namespace sdr
     bool sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples);
     bool receive_block(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t count);
     void change_channel_freq(PCONFIG sdr, size_t freq);
-    bool sdr_receive_one_channel(PCONFIG sdr, PCOMPLEX rx, size_t samples);
+    bool sdr_receive_one_channel(PCONFIG sdr, struct iio_buffer* buff_rx, PCOMPLEX rx, size_t samples);
+    bool create_buffer(PCONFIG sdr, struct iio_buffer** buff_rx_out, size_t samples_count);
+    void free_buf_rx(struct iio_buffer** buff_rx_out);
 }
 
 #endif

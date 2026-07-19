@@ -49,7 +49,10 @@ bool sdr::init_sdr(PCONFIG sdr, const char* uri, size_t freq, size_t sample_rate
     iio_channel_enable(sdr->rx2_i);
     iio_channel_enable(sdr->rx2_q);
 
-    EXECUTE_OR_GOTO(end, "[create_buff] failed", sdr->rxbuf = iio_device_create_buffer(sdr->rx, 4096, false));
+    //EXECUTE_OR_GOTO(end, "[create_buff] failed", sdr->rxbuf = iio_device_create_buffer(sdr->rx, 4096, false));
+    EXECUTE_OR_GOTO(end, "[create_buff] failed", sdr->rxbuf = iio_device_create_buffer(sdr->rx, 1 << 16, false));
+    sdr->buf_pos = NULL;
+    sdr->buf_end = NULL;
 
 end:
     return return_code;
@@ -58,6 +61,22 @@ end:
 void sdr::change_channel_freq(PCONFIG sdr, size_t freq)
 {
     iio_channel_attr_write_longlong(sdr->chn, "frequency", freq);
+}
+
+bool sdr::create_buffer(PCONFIG sdr, struct iio_buffer** buff_rx_out, size_t samples_count)
+{
+    if(!(*buff_rx_out = iio_device_create_buffer(sdr->rx, samples_count, false)))
+    {
+        printf("[create_buff] failed\n");
+        return false;
+    }
+    return true;
+}
+
+void sdr::free_buf_rx(struct iio_buffer** buff_rx_out)
+{
+    if(*buff_rx_out)
+        iio_buffer_destroy(*buff_rx_out);
 }
 
 bool sdr::free_config(PCONFIG sdr)
@@ -72,23 +91,26 @@ bool sdr::free_config(PCONFIG sdr)
 bool sdr::sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples)
 {
     size_t received = 0;
+    ptrdiff_t step = iio_buffer_step(sdr->rxbuf);
     while(received < samples)
     {
-        ssize_t bytes = iio_buffer_refill(sdr->rxbuf);
-        if(bytes < 0) return false;
-
-        ptrdiff_t step = iio_buffer_step(sdr->rxbuf);
-        char* first = (char*)iio_buffer_first(sdr->rxbuf, sdr->rx1_i);
-        char* end = (char*)iio_buffer_end(sdr->rxbuf);
-
-        while (first < end && received < samples)
+        if(sdr->buf_pos >= sdr->buf_end)
         {
-            int16_t* iq = (int16_t*)first;
+            ssize_t bytes = iio_buffer_refill(sdr->rxbuf);
+            if(bytes < 0) return false;
+
+            sdr->buf_pos = (char*)iio_buffer_first(sdr->rxbuf, sdr->rx1_i);
+            sdr->buf_end = (char*)iio_buffer_end(sdr->rxbuf);
+        }
+
+        while (sdr->buf_pos < sdr->buf_end && received < samples)
+        {
+            int16_t* iq = (int16_t*)sdr->buf_pos;
             rx1[received].i = (float)iq[0];
             rx1[received].q = (float)iq[1];
             rx2[received].i = (float)iq[2];
             rx2[received].q = (float)iq[3];
-            first += step;
+            sdr->buf_pos += step;
             ++received;
         }
     }
@@ -96,24 +118,28 @@ bool sdr::sdr_receive(PCONFIG sdr, PCOMPLEX rx1, PCOMPLEX rx2, size_t samples)
     return received != 0 ? true : false;
 }
 
-bool sdr::sdr_receive_one_channel(PCONFIG sdr, PCOMPLEX rx, size_t samples)
+bool sdr::sdr_receive_one_channel(PCONFIG sdr, struct iio_buffer* buff_rx, PCOMPLEX rx, size_t samples)
 {
     size_t received = 0;
+    ptrdiff_t step = iio_buffer_step(buff_rx);
+
     while(received < samples)
     {
-        ssize_t bytes = iio_buffer_refill(sdr->rxbuf);
-        if(bytes < 0) return false;
-
-        ptrdiff_t step = iio_buffer_step(sdr->rxbuf);
-        char* first = (char*)iio_buffer_first(sdr->rxbuf, sdr->rx1_i);
-        char* end = (char*)iio_buffer_end(sdr->rxbuf);
-
-        while (first < end && received < samples)
+        if(sdr->buf_pos >= sdr->buf_end)
         {
-            int16_t* iq = (int16_t*)first;
+            ssize_t bytes = iio_buffer_refill(buff_rx);
+            if(bytes < 0) return false;
+
+            sdr->buf_pos = (char*)iio_buffer_first(buff_rx, sdr->rx1_i);
+            sdr->buf_end = (char*)iio_buffer_end(buff_rx);
+        }
+
+        while (sdr->buf_pos < sdr->buf_end && received < samples)
+        {
+            int16_t* iq = (int16_t*)sdr->buf_pos;
             rx[received].i = (float)iq[0];
             rx[received].q = (float)iq[1];
-            first += step;
+            sdr->buf_pos += step;
             ++received;
         }
     }
