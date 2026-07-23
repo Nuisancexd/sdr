@@ -37,7 +37,6 @@ namespace FFT
     float fft_re(PFFT fft, int m);
     float fft_im(PFFT fft, int m);
     double* window_Hamming_init(int N);
-    void polyphase_summ(double* window_hamm, PCOMPLEX in, PCOMPLEX out, int samples, int FFT_size);
 }
 
 #endif

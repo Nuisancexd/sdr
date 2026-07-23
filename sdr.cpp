@@ -27,15 +27,18 @@ bool sdr::init_sdr(PCONFIG sdr, const char* uri, size_t freq, size_t sample_rate
 
     EXECUTE_OR_GOTO(end, "[device_find_channel] failed", sdr->rx1_cfg = iio_device_find_channel(sdr->dev, "voltage0", false));
     iio_channel_attr_write(sdr->rx1_cfg, "gain_control_mode", "manual");
-    iio_channel_attr_write_longlong(sdr->rx1_cfg, "hardwaregain", 10);
+    iio_channel_attr_write_longlong(sdr->rx1_cfg, "hardwaregain", 50);
     iio_channel_attr_write(sdr->rx1_cfg, "rf_port_select", "A_BALANCED");
     iio_channel_attr_write_longlong(sdr->rx1_cfg, "sampling_frequency", sample_rate);
 
     EXECUTE_OR_GOTO(end, "[device_find_channel] failed", sdr->rx2_cfg = iio_device_find_channel(sdr->dev, "voltage1", false));
     iio_channel_attr_write(sdr->rx2_cfg, "gain_control_mode", "manual");
-    iio_channel_attr_write_longlong(sdr->rx2_cfg, "hardwaregain", 10);
+    iio_channel_attr_write_longlong(sdr->rx2_cfg, "hardwaregain", 50);
     iio_channel_attr_write(sdr->rx2_cfg, "rf_port_select", "A_BALANCED");
     iio_channel_attr_write_longlong(sdr->rx2_cfg, "sampling_frequency", sample_rate);
+    
+    //iio_channel_attr_write_longlong(sdr->rx1_cfg, "rf_bandwidth", 2000000);
+    //iio_channel_attr_write_longlong(sdr->rx2_cfg, "rf_bandwidth", 2000000);
 
     EXECUTE_OR_GOTO(end, "[ctx_find_deviec] failed", sdr->rx = iio_context_find_device(sdr->ctx, "cf-ad9361-lpc"));
     
@@ -49,8 +52,14 @@ bool sdr::init_sdr(PCONFIG sdr, const char* uri, size_t freq, size_t sample_rate
     iio_channel_enable(sdr->rx2_i);
     iio_channel_enable(sdr->rx2_q);
 
-    //EXECUTE_OR_GOTO(end, "[create_buff] failed", sdr->rxbuf = iio_device_create_buffer(sdr->rx, 4096, false));
     EXECUTE_OR_GOTO(end, "[create_buff] failed", sdr->rxbuf = iio_device_create_buffer(sdr->rx, 1 << 16, false));
+
+    iio_device_attr_write_bool(sdr->dev, "quadrature_tracking_en", true);
+    iio_device_attr_write_bool(sdr->dev, "rf_dc_offset_tracking_en", true);
+    iio_device_attr_write_bool(sdr->dev, "bb_dc_offset_tracking_en", true);
+    iio_device_attr_write(sdr->dev, "calib_mode", "auto");
+    usleep(200000);
+
     sdr->buf_pos = NULL;
     sdr->buf_end = NULL;
 

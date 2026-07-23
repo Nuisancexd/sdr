@@ -1,3 +1,4 @@
+#include <fftw3.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -9,17 +10,15 @@
 #include "FFT.h"
 #include <cstring>
 
+#define DEBUG
+//#define SUM_SAMPL_SPEC
+
 #define M 1000000
-
-//#define FREQ 2412000000
-static ssize_t FREQ = 2412000000;
-#define BASEBAND 20 * M
+static ssize_t FREQ = 2437000000;
+//static ssize_t FREQ = 2412000000;
 #define SAMPLE_RATE 20000000
+//#define SAMPLE_RATE 61440000
 #define FFT_size 1024
-
-constexpr float TIME_SIGNAL = (float)FFT_size/(float)SAMPLE_RATE;
-float TIME_SIGNAL_WIFI = 0.02 / TIME_SIGNAL;
-int WIFI_INTERVAL = (int)TIME_SIGNAL_WIFI;
 
 sig_atomic_t doneman = 1;
 void signal_handler(int)
@@ -29,122 +28,183 @@ void signal_handler(int)
 
 int main()
 {
-    PCOMPLEX rx1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
-    PCOMPLEX rx2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
     CONFIG sdr = {};
+#ifndef DEBUG
     if(sdr::init_sdr(&sdr, "ip:192.168.2.1", FREQ, SAMPLE_RATE) && sdr::free_config(&sdr))
         return EXIT_FAILURE;
+#endif
     
-    PCOMPLEX fft_sum_1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
-    PCOMPLEX fft_sum_2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
-    PHASE phase;
+    PCOMPLEX rx1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PCOMPLEX rx2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
     FFT_t fft1;
     FFT_t fft2;
-
-    // iio_buffer* rx_scan_buf = NULL;
-    // if(!sdr::create_buffer(&sdr, &rx_scan_buf, 1 << 16))
-    //     { printf("failed create buffer scan\n"); return EXIT_FAILURE; }
-    PCOMPLEX rx_scan = (PCOMPLEX)malloc(FFT_size * WIFI_INTERVAL * sizeof(COMPLEX));
-    int samples_scan = FFT_size * WIFI_INTERVAL;
-    float power_scan = 0;
-    float power_scan_db;
-    float porog_H1_db = 28.0;
-    int ch = 1;
     if(!FFT::fft_init(&fft1, FFT_size) || !FFT::fft_init(&fft2, FFT_size))
     { printf("failed fft init\n"); return EXIT_FAILURE; }
 
+    PCOMPLEX fft_sum_1 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    PCOMPLEX fft_sum_2 = (PCOMPLEX)malloc(FFT_size * sizeof(COMPLEX));
+    fftwf_complex* fft = (fftwf_complex*)fftwf_malloc(FFT_size * sizeof(fftwf_complex));
+    int padding = 2048;
+    int size = FFT_size * padding;
+    fftwf_complex* padded = (fftwf_complex*)fftwf_malloc(size * sizeof(fftwf_complex));
+    fftwf_complex* OBPF = (fftwf_complex*)fftwf_malloc(size * sizeof(fftwf_complex));
+    fftwf_plan OBPF_plan = fftwf_plan_dft_1d(size, padded, OBPF, FFTW_BACKWARD, FFTW_ESTIMATE);
+
+    unsigned int size_padd;
+    long double maxPower;
+    int peak;
+    long double p;
+    double phase_rad;
+    double s;
+    double angle;
+    double threshold;
+
     float lambda = 299792458.0f / FREQ;
     float d = lambda / 2.0f;
-    int max_bin;
-    float max_ampl, delta_phi, sin_theta, theta_rad, theta_deg;
-    //int blocks = SAMPLE_RATE / FFT_size;
-    double wk;
-    int blocks = 2000;
-    int win_len = blocks * FFT_size;
-    double* w = FFT::window_Hamming_init(win_len);
+    float tau = (float)d / 299792458.0f;
+    
+    int blocks = 100;
+
     std::signal(SIGINT, signal_handler);
     while(doneman)
     {
-        for(; doneman; power_scan = 0)
-        {
-            sdr::change_channel_freq(&sdr, FREQ + ((ch - 1) * 5 * M));
-            usleep(10000);
-            sdr.buf_pos = sdr.buf_end;
-            for(int i = 0; i < 2; ++i)
-                sdr::sdr_receive_one_channel(&sdr, sdr.rxbuf, rx_scan, FFT_size);    
-            
-            sdr::sdr_receive_one_channel(&sdr, sdr.rxbuf, rx_scan, samples_scan);
-                
-            for(int j = 0; j < samples_scan; ++j)
-                power_scan += (rx_scan[j].i * rx_scan[j].i) + (rx_scan[j].q * rx_scan[j].q);
-
-            power_scan /= samples_scan;
-            power_scan_db = 10.0 * log10(power_scan + 1e-10);
-            printf("Channel %d\t avg_sum_iq %f\t power_db %f\n", ch, power_scan, power_scan_db);
-            if(power_scan_db >= porog_H1_db)
-            {
-                printf("Peleng for channel %d power_signal >= porog_H1\n", ch);
-                ++ch;
-                power_scan = 0;
-                break;
-            }
-            if(++ch > 13)
-                ch = 1;
-        }
-
+        memset(fft, 0x00, FFT_size * sizeof(COMPLEX));
         memset(fft_sum_1, 0x00, FFT_size * sizeof(COMPLEX));
         memset(fft_sum_2, 0x00, FFT_size * sizeof(COMPLEX));
+
+#ifdef SUM_SAMPL
         for(int i = 0; i < blocks; ++i)
         {
-            if(!sdr::sdr_receive(&sdr, rx1, rx2, FFT_size))
-                break;
-
-            for(int k = 0; k < FFT_size; ++k)
+            sdr::sdr_receive(&sdr, rx1, rx2, FFT_size);
+            for(int j = 0; j < FFT_size; ++j)
             {
-                wk = w[k + i * FFT_size]; 
-                fft_sum_1[k].i += rx1[k].i * wk;
-                fft_sum_1[k].q += rx1[k].q * wk;
-                fft_sum_2[k].i += rx2[k].i * wk;
-                fft_sum_2[k].q += rx2[k].q * wk;
+                fft_sum_1[j].i += rx1[j].i;
+                fft_sum_1[j].q += rx1[j].q;
+                fft_sum_2[j].i += rx2[j].i;
+                fft_sum_2[j].q += rx2[j].q;
             }
         }
-
         FFT::fft_exec(&fft1, fft_sum_1, FFT_size);
         FFT::fft_exec(&fft2, fft_sum_2, FFT_size);
-
-        FFT::phase_diff(&phase, &fft1, &fft2, FFT_size);
-
-        max_ampl = 0.0f;
-        max_bin = 0;
-        for (int m = 1; m < FFT_size; ++m)
+        for(int i = 0; i < FFT_size; ++i)
         {
-            float amplitude = FFT::fft_amplitude(&fft1, m) + FFT::fft_amplitude(&fft2, m);
-            if (amplitude > max_ampl)
+            fft[i][0] = fft1.out[i][0] * fft2.out[i][0] + fft1.out[i][1] * fft2.out[i][1];
+            fft[i][1] = fft1.out[i][1] * fft2.out[i][0] - fft1.out[i][0] * fft2.out[i][1];
+        }
+#elif defined SUM_SAMPL_SPEC
+        for (int i = 0; i < blocks; ++i)
+        {
+            if (!sdr::sdr_receive(&sdr, rx2, rx1, FFT_size))
+                break;
+        
+            FFT::fft_exec(&fft1, rx1, FFT_size);
+            FFT::fft_exec(&fft2, rx2, FFT_size);
+        
+            for (int j = 0; j < FFT_size; ++j)
             {
-                max_ampl = amplitude;
-                max_bin = m;
+                fft[j][0] += fft2.out[j][0] * fft1.out[j][0] + fft2.out[j][1] * fft1.out[j][1];
+                fft[j][1] += fft2.out[j][1] * fft1.out[j][0] - fft2.out[j][0] * fft1.out[j][1];
             }
         }
+#else
 
-        static float PHASE_OFFSET = -3.7f;
-        delta_phi = phase.bin[max_bin].phase;
-        delta_phi -= PHASE_OFFSET;
+        for(double i = -0.205; i <= 0.215; i += 0.01)
+        {
 
-        delta_phi = fmodf(delta_phi + M_PI, 2.0 * M_PI);
-        if (delta_phi < 0)
-            delta_phi += 2.0 * M_PI;
-        delta_phi -= M_PI;
+        memset(fft, 0x00, FFT_size * sizeof(COMPLEX));
+        float delay_tau = i * 1e-9;
+        float phase;
+        float phase_delay;
 
-        sin_theta = (delta_phi * lambda) / (2.0f * M_PI * d);
-        if (sin_theta >  1.0f) sin_theta =  1.0f;
-        if (sin_theta < -1.0f) sin_theta = -1.0f;
+        /* f_bin = m * fs/N */
+        float f0 = (30.0f * (float)SAMPLE_RATE/FFT_size);
 
-        theta_rad = asinf(sin_theta);
-        theta_deg = theta_rad * 180.0f / M_PI;
+        /*
+        exp(j*2M_PI * f0 * n/fs)
+        exp(j*2M_PI * f0 * (n/fs - delay))
+        */            
+        for (int i = 0; i < blocks; ++i)
+        {
+            memset(rx1, 0x00, FFT_size * sizeof(COMPLEX));
+            memset(rx2, 0x00, FFT_size * sizeof(COMPLEX));
+            for(int j = 0; j < FFT_size; ++j)
+            {
+                for(int k = 1; k <= 5; ++k)
+                {
+                    phase = 2.0f * M_PI * (f0 + (float)k * 2.0f) * (float)j / SAMPLE_RATE;
+                    rx1[j].i += cosf(phase);
+                    rx1[j].q += sinf(phase);
 
-        printf("Signal at bin %d, amplitude = %.1f\n", max_bin, max_ampl / FFT_size);
-        printf("Phase difference = %.3f rad (%.1f deg)\n", delta_phi, delta_phi * 180.0f / M_PI);
-        printf("angle = %.1f degrees\n\n", theta_deg);
+                    //phase_delay = 2.0f * M_PI * f0 * ((float)n / SAMPLE_RATE - delay_samples);
+                    phase_delay = 2.0f * M_PI * (f0 + (float)k * 2.0f) * ((float)j / SAMPLE_RATE) + (-2.0f * M_PI * FREQ * delay_tau);
+                    rx2[j].i += cosf(phase_delay);
+                    rx2[j].q += sinf(phase_delay);
+                }
+            }
+            FFT::fft_exec(&fft1, rx1, FFT_size);
+            FFT::fft_exec(&fft2, rx2, FFT_size);
+
+            for (int j = 0; j < FFT_size; ++j)
+            {
+                fft[j][0] += fft2.out[j][0] * fft1.out[j][0] + fft2.out[j][1] * fft1.out[j][1];
+                fft[j][1] += fft2.out[j][1] * fft1.out[j][0] - fft2.out[j][0] * fft1.out[j][1];
+            }
+        }
+#endif
+
+        memset(padded, 0x00, size * sizeof(fftwf_complex));
+        memset(OBPF, 0x00, size * sizeof(fftwf_complex));
+        
+        for(int i = 0; i <= FFT_size / 2; ++i)
+        {
+            padded[i][0] = fft[i][0];
+            padded[i][1] = fft[i][1];
+        }
+        for(int i = FFT_size/2 + 1; i < FFT_size; ++i)
+        {
+            padded[size - (FFT_size - i)][0] = fft[i][0];
+            padded[size - (FFT_size - i)][1] = fft[i][1];
+        }
+
+        fftwf_execute(OBPF_plan);
+
+        size_padd = (unsigned int)ceilf((double)tau * (double)SAMPLE_RATE * padding) + 2;
+
+        maxPower = 0;
+        peak = 0;
+        for(int i = 0; i <= size_padd; ++i)
+        {
+            p = OBPF[i][0]*OBPF[i][0] + OBPF[i][1]*OBPF[i][1];
+            if(p > maxPower) { maxPower = p; peak = i; }
+        }
+        for(int i = size - size_padd; i < size; ++i)
+        {
+            p = OBPF[i][0]*OBPF[i][0] + OBPF[i][1]*OBPF[i][1];
+            if(p > maxPower) { maxPower = p; peak = i; }
+        }
+        
+        phase_rad = atan2f(OBPF[peak][1],OBPF[peak][0]);
+#ifdef DEBUG
+        double time_delay = phase_rad / (2.0 * M_PI * FREQ);
+#else
+        phase_rad -= 3.62f;
+#endif
+        if (phase_rad > M_PI)  phase_rad -= 2.0f * M_PI;
+        if (phase_rad < -M_PI) phase_rad += 2.0f * M_PI;
+
+        s = phase_rad * lambda/ (2.0 * M_PI * d);
+        if(s > 1.0) s = 1.0;
+        if(s < -1.0) s = - 1.0;
+        angle = asinf(s) * 180.0 / M_PI;
+#ifndef DEBUG
+        printf("%-14s  phase %+7.2f rad   Angle %+8.2f\n", " ", phase_rad, angle);
+#else
+        
+        printf("peak %8d  phase %+7.4f rad  angle %+7.2f delay_peak_phase %+7.2f ns  delay_time%+7.2f ns  delay_samp %.3f\n", 
+            peak, phase_rad, angle, time_delay * 1e9, delay_tau * 1e9f, delay_tau * SAMPLE_RATE);
+        } 
+        break;
+#endif
     }
 
     if(fft_sum_1)
@@ -155,11 +215,9 @@ int main()
         free(rx1);
     if(rx2)
         free(rx2);
-    if(w)
-        free(w);    
-    if(rx_scan)
-        free(rx_scan);
-    //sdr::free_buf_rx(&rx_scan_buf);
     sdr::free_config(&sdr);
+    fftwf_free(padded);
+    fftwf_free(OBPF);
+    fftwf_destroy_plan(OBPF_plan);
     return EXIT_SUCCESS;
 }
