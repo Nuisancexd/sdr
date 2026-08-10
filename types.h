@@ -8,4 +8,7 @@ typedef struct complex
 } COMPLEX, *PCOMPLEX;
 
 
+#define TO_FLOAT(x) (float)(x)
+
+
 #endif
