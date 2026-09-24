@@ -15,15 +15,13 @@
 #include <matplot/matplot.h>
 using namespace matplot;
 
-#define DEBUG
+//#define DEBUG
 
 #define M 1000000
-//static ssize_t FREQ = 2180000000;
-//static ssize_t FREQ = 2422000000;
-//#define SAMPLE_RATE 61440000
-//#define SAMPLE_RATE 40000000
 
-static ssize_t FREQ = 2437000000;
+static ssize_t FREQ = 2440000000;
+//static ssize_t FREQ = 2412000000;
+//static ssize_t FREQ = 2462000000;
 #define SAMPLE_RATE 20000000
 #define FFT_size 1024
 
@@ -51,13 +49,6 @@ int main()
     fftwf_complex* fft = (fftwf_complex*)fftwf_malloc(FFT_size * sizeof(fftwf_complex));
     float* phase_fft = (float*)malloc(FFT_size * sizeof(float));
     float* amplitude = (float*)malloc(FFT_size * sizeof(float));
-    float energy = 0.0f;
-    int padding = 200;
-    int size = FFT_size * padding;
-    fftwf_complex* padded = (fftwf_complex*)fftwf_malloc(size * sizeof(fftwf_complex));
-    fftwf_complex* OBPF = (fftwf_complex*)fftwf_malloc(size * sizeof(fftwf_complex));
-    fftwf_plan OBPF_plan = fftwf_plan_dft_1d(size, padded, OBPF, FFTW_BACKWARD, FFTW_ESTIMATE);
-
     int size_padd;
     long double maxPower;
     double phase_rad;
@@ -69,27 +60,23 @@ int main()
     float lambda =  speed_light / FREQ;
     float d = lambda / 2.0f;
     float tau = d / speed_light;
-    int blocks = 1;
-    float scale = (blocks + 1) * FFT_size * FFT_size;
-    float dt_s = 1.0f/(SAMPLE_RATE * padding);
+    int blocks = 0;
+    float scale = (blocks + 1); //* FFT_size * FFT_size;
+    //float dt_s = 1.0f/(SAMPLE_RATE * padding);
 
-    float correlation, freq_bin, phase_model, weight_sum;
     float max_correlation = -1.0f, correlation_angle;
     float bin = SAMPLE_RATE / TO_FLOAT(FFT_size);
     float freq_signal = 0.0f;
 
-    float max_amp = 0.0f;
-    float amp_threshold = 0.0f;
-
-    float max_corr_left = -1.0f;
-    float corr_angle_left = -90.0f;
-    float max_corr_right = -1.0f;
-    float corr_angle_right = 90.0f;
-
-    std::vector<double> angle_vec(361);
+    std::vector<double> angle_vec(601);
+    std::vector<double> angle_th(601);
+    std::vector<std::vector<double>> phase_model_vec(601, std::vector<double>(FFT_size, 0.0f));
     int indx = 0;
-    for (float ang = -90.0f; ang <= 90.0f; ang += 0.5f) 
-        angle_vec[indx++] = ang;
+    for (float ang = -90.0f; ang <= 90.0f; ang += 0.3f) 
+    {
+        angle_vec[indx] = ang;
+        angle_th[indx++] = d * sinf(ang * M_PI/180.0f);
+    }
 
     std::vector<double> corr_vec = {0.0};
 
@@ -97,6 +84,8 @@ int main()
     std::vector<double> time_corr = {0.0, 1.0};
 
     auto fig_corr_time = matplot::figure(true);
+    fig_corr_time->x_position(2000);
+    fig_corr_time->y_position(500);
     fig_corr_time->size(512, 768);
     auto fig_time_ax = fig_corr_time->current_axes();
     fig_time_ax->clear();
@@ -109,6 +98,8 @@ int main()
     plt_time->line_width(2);
 
     auto fig_corr = matplot::figure(true);
+    fig_corr->x_position(1500);
+    fig_corr->y_position(500);
     fig_corr->size(512, 768);
     auto fig_ax = fig_corr->current_axes();
     fig_ax->clear();
@@ -122,6 +113,8 @@ int main()
     plt->line_width(2);
 
     auto fig_polar = matplot::figure(true);
+    fig_polar->x_position(1000);
+    fig_polar->y_position(500);
     fig_polar->size(512, 768);
     auto fig_plr_ax = fig_polar->current_axes();
     fig_plr_ax->hold(matplot::on);
@@ -161,7 +154,9 @@ int main()
     }
     std::vector<double> spectrum_db(FFT_size, -120.0);
     auto fig_spectrum = matplot::figure(true);
-    fig_spectrum->size(550, 768);
+    fig_spectrum->x_position(500);
+    fig_spectrum->y_position(500);
+    fig_spectrum->size(550*2, 768);
     auto fig_spec_ax = fig_spectrum->current_axes();
     fig_spec_ax->clear();
     fig_spec_ax->hold(matplot::on);
@@ -175,7 +170,9 @@ int main()
 
     std::vector<double> phase_deg(FFT_size, 0.0);
     auto fig_phase = matplot::figure(true);
-    fig_phase->size(550, 768);
+    fig_phase->x_position(0);
+    fig_phase->y_position(500);
+    fig_phase->size(550*2, 768);
     auto fig_phase_ax = fig_phase->current_axes();
     fig_phase_ax->clear();
     fig_phase_ax->hold(matplot::on);
@@ -183,7 +180,7 @@ int main()
     fig_phase_ax->ylabel("Фаза, град");
     fig_phase_ax->title("ФЧХ");
     fig_phase_ax->xlim({(FREQ - SAMPLE_RATE/2.0)/1e6, (FREQ + SAMPLE_RATE/2.0)/1e6});
-    fig_phase_ax->ylim(matplot::automatic);
+    fig_phase_ax->ylim({-200.0, 200});
     auto plt_phase = fig_phase_ax->plot(freq_axis, phase_deg);
     plt_phase->line_width(2);
 
@@ -191,8 +188,9 @@ int main()
     while(doneman)
     {
 #ifdef DEBUG
-        for(double k = -0.205; k <= 0.215 && doneman; k += 0.01)
+        for(double k = -0.2048; k <= 0.15 && doneman; k += 0.01)
         {
+            //sleep(1);
             memset(fft, 0x00, FFT_size * sizeof(COMPLEX));
             memset(spectrum_acc, 0, FFT_size * sizeof(float));
             float delay_tau = k * 1e-9;
@@ -213,13 +211,15 @@ int main()
 
                 for(int j = 0; j < FFT_size; ++j)
                 {
-                    for(int t = -250; t <= 250; ++t)
+                    float time = (float)j / SAMPLE_RATE;
+                    for(int t = -50; t <= 50; ++t)
                     {   
-                        phase = 2.0f * M_PI * (f0 + (float)t * bin) * (float)j / SAMPLE_RATE;
+                        float subf = f0 + (float)t * bin;
+                        phase = 2.0f * M_PI * subf * time;
                         rx1[j].i += cosf(phase);
                         rx1[j].q += sinf(phase);
 
-                        phase_delay = 2.0f * M_PI * (f0 + (float)t * bin) * ((float)j / SAMPLE_RATE) + (-2.0f * M_PI * FREQ * delay_tau);
+                        phase_delay = 2.0f * M_PI * subf * time + (-2.0f * M_PI * FREQ * delay_tau);
                         rx2[j].i += cosf(phase_delay);
                         rx2[j].q += sinf(phase_delay);
                     }
@@ -236,17 +236,16 @@ int main()
             }
 #else
         sdr::sdr_receive(&sdr, rx1, rx2, FFT_size);
-        energy = 0.0f;
+        float energy = 0.0f;
         for(int i = 0; i < FFT_size; ++i)
             energy += rx1[i].i * rx1[i].i + rx1[i].q * rx1[i].q;
         // printf("%f\n", energy);
         // continue;
-        if((energy) < 135000.0f)
+        if((energy) < 500000.0f)
            continue;
 
         memset(fft, 0x00, FFT_size * sizeof(COMPLEX));
         memset(spectrum_acc, 0, FFT_size * sizeof(float));
-
         FFT::fft_exec(&fft1, rx1, FFT_size);
         FFT::fft_exec(&fft2, rx2, FFT_size);
 
@@ -270,12 +269,12 @@ int main()
             }
         }
 #endif
-
+        float max_amp = 0.0f;
         for(int i = 0; i < FFT_size; ++i)
         {
             fft[i][0] /= scale;
             fft[i][1] /= scale;
-            phase_fft[i] = atan2f(fft[i][1], fft[i][0]);
+            phase_fft[i] = atan2f(fft[i][1], fft[i][0]); 
             amplitude[i] = sqrt(fft[i][0] * fft[i][0] + fft[i][1] * fft[i][1]);
             if(amplitude[i] > max_amp)
                 max_amp = amplitude[i];
@@ -286,84 +285,51 @@ int main()
             phase_deg[shifted] = phase_fft[i] * 180.0 / M_PI;
         }    
 
-        amp_threshold = max_amp * .1f;
+        float amp_threshold = max_amp * .3f;
         corr_vec.clear();
-        int passed = 0;
-        for(float ang = -90.0f; ang <= 90.0f; ang += 0.5f)
+        float max_corr = -2.0f, corr_angle = 0.0f;
+        int j = 0;
+        for(float ang = -90.0f; ang <= 90.0f; ang += 0.3f)
         {
-            correlation = 0.0f;
-            weight_sum = 0.0f;
-            float sum_re = 0.0f;
-            float sum_im = 0.0f;
+            float correlation = 0.0f;
+            float weight_sum = 0.0f;
+            int bins_count = 0;
             for(int i = 1; i < FFT_size; ++i)
             {
-                freq_bin = TO_FLOAT(i) * bin;
+                float freq_bin = TO_FLOAT(i) * bin;
                 if(i > FFT_size / 2)
                     freq_bin -= SAMPLE_RATE;
                 if(amplitude[i]< amp_threshold)
-                  continue;
-                phase_model = (2.0f * M_PI * (FREQ + freq_bin) * d * sinf(ang * M_PI/180.0f)) / speed_light;
-                correlation += cosf(phase_fft[i] - phase_model) * amplitude[i];
+                    continue;
+                float phase_model = ((2.0f * M_PI * (FREQ + freq_bin) * angle_th[j]) / speed_light);
+                correlation += std::cos(phase_fft[i] - (phase_model - 2.443f)) * amplitude[i];
                 weight_sum += amplitude[i];
-                passed++;
             }
             if(weight_sum > 1e-12f)
-                correlation /= weight_sum;
+               correlation /= weight_sum;
             else correlation = 0;
             corr_vec.push_back(correlation);
-        }
-
-        max_corr_left = -1.0f;
-        max_corr_right = -1.0f;
-        corr_angle_left = 0.0f;
-        corr_angle_right = 0.0f;
-        for (int i = 0; i < corr_vec.size(); ++i) 
-        {
-            if (angle_vec[i] < 0.0f)
+            if(max_corr < correlation)
             {
-                if (corr_vec[i] > max_corr_left) 
-                {
-                    max_corr_left = corr_vec[i];
-                    corr_angle_left = angle_vec[i];
-                }
+                max_corr = correlation;
+                corr_angle = ang;
             }
-            else
-            {
-                if (corr_vec[i] > max_corr_right) 
-                {
-                    max_corr_right = corr_vec[i];
-                    corr_angle_right = angle_vec[i];
-                }
-            }
+            ++j;
         }
 
-        //if(max_corr_left < 0.65 && max_corr_right < 0.65)
-        //   continue;
-
-        if (max_corr_left >= 0.8f)
-        {
-            peleng_line_1->x_data(std::vector<double>{0.0, sinf(corr_angle_left * M_PI / 180.0f)});
-            peleng_line_1->y_data(std::vector<double>{0.0, cosf(corr_angle_left * M_PI / 180.0f)});
-        }
-        else 
+        if (max_corr < 0.65f)
         {
             peleng_line_1->x_data(std::vector<double>{0.0, 0.0});
             peleng_line_1->y_data(std::vector<double>{0.0, 0.0});
         }
-
-        if (max_corr_right >= 0.8f) 
+        else
         {
-            peleng_line_2->x_data(std::vector<double>{0.0, sinf(corr_angle_right * M_PI / 180.0f)});
-            peleng_line_2->y_data(std::vector<double>{0.0, cosf(corr_angle_right * M_PI / 180.0f)});
-        }
-        else 
-        {
-            peleng_line_2->x_data(std::vector<double>{0.0, 0.0});
-            peleng_line_2->y_data(std::vector<double>{0.0, 0.0});
+            float angle_rad = corr_angle * M_PI / 180.0f;
+            peleng_line_1->x_data(std::vector<double>{0.0, sinf(angle_rad)});
+            peleng_line_1->y_data(std::vector<double>{0.0, cosf(angle_rad)});
         }
         fig_plr_ax->draw();
-        
-        
+
         plt->x_data(angle_vec);
         plt->y_data(corr_vec);
         plt->touch();
@@ -373,73 +339,15 @@ int main()
         plt_spectrum->touch();
         fig_spectrum->draw();
 
-        plt_phase->y_data(phase_deg);
-        plt_phase->touch();
-        fig_phase->draw();
+        // plt_phase->y_data(phase_deg);
+        // plt_phase->touch();
+        // fig_phase->draw();
 
-        printf("angle1 %5.1f corr %5.2f angle2 %5.2f corr %5.2f\n", corr_angle_left, max_corr_left, corr_angle_right, max_corr_right);
-        sleep(1);
+        printf("angle %5.1f corr %5.2f\n", corr_angle, max_corr);
+        usleep(200000);
 #ifdef DEBUG
     }
 #endif
-        // memset(padded, 0x00, size * sizeof(fftwf_complex));
-        // memset(OBPF, 0x00, size * sizeof(fftwf_complex));
-        
-        // for(int i = 1; i <= FFT_size / 2; ++i)
-        // {    
-        //     padded[i][0] = fft[i][0];
-        //     padded[i][1] = fft[i][1];
-        // }
-        // for(int i = FFT_size/2 + 1; i < FFT_size; ++i)
-        // {
-        //     padded[size - (FFT_size - i)][0] = fft[i][0];
-        //     padded[size - (FFT_size - i)][1] = fft[i][1];
-        // }
-
-        // fftwf_execute(OBPF_plan);
-        // for (int i = 0; i < size; i++)
-        // {
-        //     OBPF[i][0] /= FFT_size;
-        //     OBPF[i][1] /= FFT_size;
-        // }
-
-        // size_padd = ceilf((double)tau * (double)SAMPLE_RATE * padding) + 10;
-        // time_axis.clear();
-        // time_corr.clear();
-        // for(int i = -size_padd; i <= size_padd; ++i)
-        // {
-        //     int idx = (i + size) % size;
-        //     time_axis.push_back((1e9 * (double)i / ((double)SAMPLE_RATE * (double)padding)));
-        //     time_corr.push_back((OBPF[idx][0]*OBPF[idx][0] + OBPF[idx][1]*OBPF[idx][1]));
-        // }
-
-        // plt_time->x_data(time_axis);
-        // plt_time->y_data(time_corr);
-        // plt_time->touch();
-        // fig_corr_time->draw();
-        // sleep(1);
-        // maxPower = 0;
-        // int peak = 0;
-        // for(int i = 0; i <= size_padd; ++i)
-        // {
-        //     float p = OBPF[i][0]*OBPF[i][0] + OBPF[i][1]*OBPF[i][1];
-        //     if(p > maxPower) { maxPower = p; peak = i; }
-        // }
-        // for(int i = size - size_padd; i < size; ++i)
-        // {
-        //     float p = OBPF[i][0]*OBPF[i][0] + OBPF[i][1]*OBPF[i][1];
-        //     if(p > maxPower) { maxPower = p; peak = i; }
-        // }
-
-        // int lag_idx = (peak <= size / 2) ? peak : peak - size;
-        // double delay_time = (double)lag_idx / ((double)SAMPLE_RATE * (double)padding);
-
-        // s = delay_time * speed_light / d;
-        // if(s > 1.0) s = 1.0;
-        // if(s < -1.0) s = -1.0;
-        // angle = asin(s) * 180.0 / M_PI;
-
-        // printf("%-14s  Angle %+8.2f\n", " ", angle);
     }
 
     if(rx1)
@@ -447,8 +355,5 @@ int main()
     if(rx2)
         free(rx2);
     sdr::free_config(&sdr);
-    fftwf_free(padded);
-    fftwf_free(OBPF);
-    fftwf_destroy_plan(OBPF_plan);
     return EXIT_SUCCESS;
 }

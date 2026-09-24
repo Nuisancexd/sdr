@@ -20,25 +20,53 @@
 bool sdr::init_sdr(PCONFIG sdr, const char* uri, size_t freq, size_t sample_rate)
 {
     int return_code = EXIT_SUCCESS;
-    EXECUTE_OR_GOTO(end, "[context] Failed connect to SDR", sdr->ctx = iio_create_context_from_uri(uri));
+    //EXECUTE_OR_GOTO(end, "[context] Failed connect to SDR", sdr->ctx = iio_create_context_from_uri(uri));
+    // 1. Создаем контекст сканирования для USB-устройств
+struct iio_scan_context *scan_ctx = iio_create_scan_context("usb", 0);
+if (!scan_ctx) {
+    printf("[context] Ошибка: Не удалось инициализировать сканирование USB\n");
+    return EXIT_FAILURE; 
+}
+
+// 2. Находим доступные устройства
+struct iio_context_info **info_list;
+ssize_t count = iio_scan_context_get_info_list(scan_ctx, &info_list);
+
+if (count <= 0) {
+    printf("[context] Ошибка: PlutoSDR по USB не найден. Проверьте кабель.\n");
+    iio_context_info_list_free(info_list); // Исправлено здесь
+    // Если по USB не нашли, пробуем откатиться на дефолтный IP
+    sdr->ctx = iio_create_context_from_uri("ip:192.168.2.1");
+} else {
+    // Берем самое первое найденное USB-устройство
+    const char* usb_uri = iio_context_info_get_uri(info_list[0]);
+    printf("[context] Найдено устройство по USB: %s\n", usb_uri);
+    
+    sdr->ctx = iio_create_context_from_uri(usb_uri);
+    iio_context_info_list_free(info_list); // Исправлено здесь
+}
+
+// Уничтожаем контекст сканирования (для libiio v0.x функция возвращает void)
+iio_scan_context_destroy(scan_ctx); 
+
     EXECUTE_OR_GOTO(end, "[device] Failed connect to SDR", sdr->dev = iio_context_find_device(sdr->ctx, "ad9361-phy"));
     EXECUTE_OR_GOTO(end, "[device_find_ch] Failed find channel", sdr->chn = iio_device_find_channel(sdr->dev, "altvoltage0", true));
     iio_channel_attr_write_longlong(sdr->chn, "frequency", freq);
 
     EXECUTE_OR_GOTO(end, "[device_find_channel] failed", sdr->rx1_cfg = iio_device_find_channel(sdr->dev, "voltage0", false));
     iio_channel_attr_write(sdr->rx1_cfg, "gain_control_mode", "manual");
-    iio_channel_attr_write_longlong(sdr->rx1_cfg, "hardwaregain", 30);
+    iio_channel_attr_write_longlong(sdr->rx1_cfg, "hardwaregain", 20);
     iio_channel_attr_write(sdr->rx1_cfg, "rf_port_select", "A_BALANCED");
     iio_channel_attr_write_longlong(sdr->rx1_cfg, "sampling_frequency", sample_rate);
 
     EXECUTE_OR_GOTO(end, "[device_find_channel] failed", sdr->rx2_cfg = iio_device_find_channel(sdr->dev, "voltage1", false));
     iio_channel_attr_write(sdr->rx2_cfg, "gain_control_mode", "manual");
-    iio_channel_attr_write_longlong(sdr->rx2_cfg, "hardwaregain", 30);
+    iio_channel_attr_write_longlong(sdr->rx2_cfg, "hardwaregain", 20);
     iio_channel_attr_write(sdr->rx2_cfg, "rf_port_select", "A_BALANCED");
     iio_channel_attr_write_longlong(sdr->rx2_cfg, "sampling_frequency", sample_rate);
     
-    iio_channel_attr_write_longlong(sdr->rx1_cfg, "rf_bandwidth", 20000000);
-    iio_channel_attr_write_longlong(sdr->rx2_cfg, "rf_bandwidth", 20000000);
+    iio_channel_attr_write_longlong(sdr->rx1_cfg, "rf_bandwidth", sample_rate);
+    iio_channel_attr_write_longlong(sdr->rx2_cfg, "rf_bandwidth", sample_rate);
 
     EXECUTE_OR_GOTO(end, "[ctx_find_deviec] failed", sdr->rx = iio_context_find_device(sdr->ctx, "cf-ad9361-lpc"));
     
@@ -57,8 +85,9 @@ bool sdr::init_sdr(PCONFIG sdr, const char* uri, size_t freq, size_t sample_rate
     iio_device_attr_write_bool(sdr->dev, "quadrature_tracking_en", false);
     iio_device_attr_write_bool(sdr->dev, "rf_dc_offset_tracking_en", false);
     iio_device_attr_write_bool(sdr->dev, "bb_dc_offset_tracking_en", false);
-    iio_device_attr_write(sdr->dev, "calib_mode", "manual");
-    iio_device_attr_write(sdr->dev, "calib_mode", "run_rx_quad");
+    //iio_device_attr_write(sdr->dev, "calib_mode", "manual");
+    //iio_device_attr_write(sdr->dev, "calib_mode", "run_rx_quad");
+    
     usleep(200000);
 
     sdr->buf_pos = NULL;
